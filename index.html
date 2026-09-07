@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DWS NMMP E. coli Dashboard</title>
+<title>DWS Microbial (E. coli) Dashboard</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{--hi:#c0392b;--med:#e67e22;--lo:#2e9e5b;--none:#9aa7ad;
+    --c0:#2e9e5b;--c1:#a8c545;--c2:#e6b800;--c3:#e67e22;--c4:#c0392b;--c5:#7b241c;
     --ink:#16242b;--muted:#5b6b73;--panel:#eef3f4;--line:#d3dbde;--card:#fff;--accent:#1c6b8c;}
   *{box-sizing:border-box;}
   html,body{margin:0;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--ink);}
@@ -25,7 +26,7 @@
   .periodlab{font-size:11px;color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600;}
   .rangepair{display:flex;align-items:center;gap:8px;margin-top:4px;}.rangepair input[type=range]{flex:1;}
   .scroll{flex:1;overflow-y:auto;padding:12px 16px 24px;}
-  .legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;margin:2px 0 4px;}
+  .legend{display:flex;flex-wrap:wrap;gap:5px 12px;font-size:11.5px;margin:2px 0 4px;}
   .legend span{display:inline-flex;align-items:center;}
   .dot{width:11px;height:11px;border-radius:50%;display:inline-block;margin-right:5px;border:1px solid rgba(0,0,0,.25);}
   .summary{font-size:12px;color:var(--muted);margin:8px 0 0;line-height:1.5;}
@@ -45,9 +46,8 @@
   .thresholds{font-size:10px;color:var(--muted);margin-top:4px;}
   .foot{font-size:10px;color:#93a0a5;padding:10px 16px;border-top:1px solid var(--line);line-height:1.5;}
   .leaflet-container{background:#dfe7ea;}
-  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-    background:#dfe7ea;z-index:500;font-size:14px;color:var(--muted);flex-direction:column;gap:10px;}
-  .spin{width:26px;height:26px;border:3px solid #bcccd2;border-top-color:var(--accent);border-radius:50%;animation:sp 0.9s linear infinite;}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#dfe7ea;z-index:500;font-size:14px;color:var(--muted);flex-direction:column;gap:10px;}
+  .spin{width:26px;height:26px;border:3px solid #bcccd2;border-top-color:var(--accent);border-radius:50%;animation:sp .9s linear infinite;}
   @keyframes sp{to{transform:rotate(360deg);}}
   @media(max-width:720px){#app{flex-direction:column;}#side{width:100%;max-width:none;height:52%;}#map{height:48%;}}
 </style>
@@ -57,19 +57,20 @@
   <div id="map"><div id="loading"><div class="spin"></div><div id="loadmsg">Loading monitoring data&hellip;</div></div></div>
   <aside id="side">
     <header>
-      <h1>DWS NMMP &mdash; E.&nbsp;coli</h1>
-      <div class="sub" id="sub">National Microbiological Monitoring Programme</div>
+      <h1>DWS Microbial &mdash; E.&nbsp;coli</h1>
+      <div class="sub" id="sub">National microbial water quality monitoring</div>
     </header>
     <div class="controls" id="controls" style="display:none">
       <label for="wma">Water Management Area</label>
       <select id="wma"></select>
       <div class="row2">
-        <div><label for="use">Risk for water use</label>
-          <select id="use">
-            <option value="5">Recreation (contact)</option>
-            <option value="6">Drinking &ndash; untreated</option>
-            <option value="7">Drinking &ndash; limited treatment</option>
-            <option value="8">Irrigation &ndash; raw crops</option>
+        <div><label for="colour">Colour sites by</label>
+          <select id="colour">
+            <option value="count">E. coli count</option>
+            <option value="5">Risk: recreation (contact)</option>
+            <option value="6">Risk: drinking (untreated)</option>
+            <option value="7">Risk: drinking (limited)</option>
+            <option value="8">Risk: irrigation (raw crops)</option>
           </select></div>
         <div><label for="agg">Marker shows</label>
           <select id="agg">
@@ -89,25 +90,26 @@
       <div class="summary" id="summary"></div>
       <div id="detail"></div>
     </div>
-    <div class="foot" id="foot" style="display:none">
-      Source: DWS RQIS National Microbiological Monitoring Programme. Counts are MPN or cfu / 100 mL.
-      Risk classes as published by DWS (based on E.&nbsp;coli, or faecal coliforms where E.&nbsp;coli not recorded).
-    </div>
+    <div class="foot" id="foot" style="display:none"></div>
   </aside>
 </div>
 <script>
-// sample columns: [date, value, isFC, turb, ph, contact, drinknone, drinkltd, irrig]
-const D=0,V=1,FC=2,TU=3,PH=4;
-const RISK_HEX=['#9aa7ad','#2e9e5b','#e67e22','#c0392b'];   // 0..3
+const D=0,V=1,FC=2,TU=3,PH=4;   // sample columns; 5..8 = risk codes
+// E. coli count colour bands (/100mL): green<130, lime<400, yellow<1000, orange<10k, red<100k, dark>=100k
+const CBANDS=[130,400,1000,10000,100000];
+const CCOL=['#2e9e5b','#a8c545','#e6b800','#e67e22','#c0392b','#7b241c'];
+const CLAB=['< 130','130\u2013400','400\u20131000','1k\u201310k','10k\u2013100k','\u2265 100k'];
+const RISK_HEX=['#9aa7ad','#2e9e5b','#e67e22','#c0392b'];
 const RISK_TXT=['no data','low','Med','HIGH'];
-const THRESHOLDS=[{v:130},{v:1000}];
+const REF=[{v:130},{v:1000}];
 const NATIONAL="\u2014 National overview \u2014";
 
-let SITES=[], map, layer, months=[], LEVELS=["","low","Med","HIGH"];
-let state={wma:NATIONAL,use:5,agg:'latest',iStart:0,iEnd:0,selected:null,_fitted:false};
+let SITES=[],map,layer,months=[],META={};
+let state={wma:NATIONAL,colour:'count',agg:'latest',iStart:0,iEnd:0,selected:null,_fitted:false};
 
 const fmt=v=>v==null?'\u2013':(v>=1000?Math.round(v).toLocaleString():(''+v));
 const ym=d=>d.slice(0,7);
+function countColor(v){if(v==null)return '#9aa7ad';let i=0;while(i<CBANDS.length&&v>=CBANDS[i])i++;return CCOL[i];}
 
 function scope(){return state.wma===NATIONAL?SITES:SITES.filter(s=>s.w===state.wma);}
 function rebuildMonths(){
@@ -118,99 +120,119 @@ function rebuildMonths(){
 }
 const inWin=d=>{const m=ym(d);return m>=months[state.iStart]&&m<=months[state.iEnd];};
 
-function agg(samples){
-  const u=state.use;
-  if(state.agg==='latest'){const s=samples[samples.length-1];return{risk:s[u],val:s[V]};}
-  if(state.agg==='worst'){let b=samples[0];for(const s of samples){
-    if(s[u]>b[u]||(s[u]===b[u]&&(s[V]||0)>(b[V]||0)))b=s;}return{risk:b[u],val:b[V]};}
-  const v=samples.map(s=>s[V]).filter(x=>x!=null).sort((a,b)=>a-b);
-  return{risk:samples[samples.length-1][u],val:v.length?v[Math.floor((v.length-1)/2)]:null};
+function aggForMarker(win){
+  // returns {col, val, risk} depending on colour mode
+  if(state.colour==='count'){
+    let val;
+    if(state.agg==='latest'){for(let i=win.length-1;i>=0;i--)if(win[i][V]!=null){val=win[i][V];break;}}
+    else if(state.agg==='worst'){val=Math.max(...win.map(s=>s[V]).filter(v=>v!=null),-1);if(val<0)val=null;}
+    else{const v=win.map(s=>s[V]).filter(x=>x!=null).sort((a,b)=>a-b);val=v.length?v[Math.floor((v.length-1)/2)]:null;}
+    return {col:countColor(val),val};
+  } else {
+    const u=+state.colour;
+    let s;
+    if(state.agg==='worst'){s=win[0];for(const x of win)if(x[u]>s[u]||(x[u]===s[u]&&(x[V]||0)>(s[V]||0)))s=x;}
+    else s=win[win.length-1];
+    return {col:RISK_HEX[s[u]],val:s[V],risk:s[u]};
+  }
 }
 function sitesInView(){
-  const out=[];
-  scope().forEach(s=>{const win=s.s.filter(x=>inWin(x[D]));if(!win.length)return;
-    out.push({...s,win,a:agg(win)});});
-  return out;
+  const out=[];scope().forEach(s=>{const win=s.s.filter(x=>inWin(x[D]));if(!win.length)return;
+    out.push({...s,win,m:aggForMarker(win)});});return out;
 }
 
 function render(){
   document.getElementById('periodlab').textContent=months.length?`${months[state.iStart]} \u2192 ${months[state.iEnd]}`:'\u2013';
   if(layer)layer.remove();layer=L.layerGroup().addTo(map);
-  const sites=sitesInView();const bounds=[];let counts=[0,0,0,0];let sel=null;
-  sites.forEach(s=>{counts[s.a.risk]++;if(s.lat==null||s.lon==null)return;bounds.push([s.lat,s.lon]);
-    const r=state.wma===NATIONAL?5:8;
-    const mk=L.circleMarker([s.lat,s.lon],{radius:r,fillColor:RISK_HEX[s.a.risk],color:'#1a1a1a',weight:1,fillOpacity:.85});
-    mk.bindTooltip(`${s.n} \u2014 ${fmt(s.a.val)}/100mL`,{direction:'top'});
+  const sites=sitesInView();const bounds=[];let sel=null;
+  const national=state.wma===NATIONAL;
+  sites.forEach(s=>{if(s.lat==null||s.lon==null)return;bounds.push([s.lat,s.lon]);
+    const mk=L.circleMarker([s.lat,s.lon],{radius:national?4:7,fillColor:s.m.col,color:'#1a1a1a',weight:national?0.5:1,fillOpacity:.82});
+    mk.bindTooltip(`${s.n} \u2014 ${fmt(s.m.val)}/100mL`,{direction:'top'});
     mk.on('click',()=>{state.selected=s.id;showDetail(s);hl(mk);});mk.addTo(layer);
     if(s.id===state.selected)sel=s;});
   if(bounds.length&&!state._fitted){map.fitBounds(bounds,{padding:[30,30]});state._fitted=true;}
-  const useLabel=document.querySelector('#use option:checked').textContent;
-  document.getElementById('legend').innerHTML=[3,2,1,0].map(k=>
-    `<span><i class="dot" style="background:${RISK_HEX[k]}"></i>${RISK_TXT[k]} (${counts[k]})</span>`).join('');
+  // legend
+  let leg;
+  if(state.colour==='count'){
+    leg=CCOL.map((c,i)=>`<span><i class="dot" style="background:${c}"></i>${CLAB[i]}</span>`).join('')
+       +`<span><i class="dot" style="background:#9aa7ad"></i>no count</span>`;
+  } else {
+    leg=[3,2,1].map(k=>`<span><i class="dot" style="background:${RISK_HEX[k]}"></i>${RISK_TXT[k]}</span>`).join('')
+       +`<span><i class="dot" style="background:#9aa7ad"></i>no risk class</span>`;
+  }
+  document.getElementById('legend').innerHTML=leg;
+  const cLabel=document.querySelector('#colour option:checked').textContent;
   document.getElementById('summary').innerHTML=
-    `<b>${sites.length}</b> sites in view &middot; risk for <b>${useLabel}</b> &middot; marker = ${document.querySelector('#agg option:checked').textContent.toLowerCase()}`;
+    `<b>${sites.length}</b> sites in view &middot; coloured by <b>${cLabel}</b> &middot; marker = ${document.querySelector('#agg option:checked').textContent.toLowerCase()}`;
   if(sel)showDetail(sel);
 }
-let lastMk=null;function hl(mk){if(lastMk)lastMk.setStyle({weight:1,color:'#1a1a1a'});mk.setStyle({weight:3,color:'#111'});lastMk=mk;}
+let lastMk=null;function hl(mk){if(lastMk)lastMk.setStyle({weight:state.wma===NATIONAL?0.5:1,color:'#1a1a1a'});mk.setStyle({weight:3,color:'#111'});lastMk=mk;}
 
 function chart(win){
   const W=352,H=150,pL=38,pR=12,pT=10,pB=24;
   const pts=win.filter(s=>s[V]!=null);
   if(!pts.length)return '<div class="thresholds">No numeric counts in this window.</div>';
   const lg=v=>Math.log10(Math.max(v,1));
-  const allV=pts.map(p=>p[V]).concat(THRESHOLDS.map(t=>t.v));
+  const allV=pts.map(p=>p[V]).concat(REF.map(t=>t.v));
   const ymax=Math.ceil(lg(Math.max(...allV)))||1,span=ymax||1;
   const x=i=>pL+(pts.length===1?0.5:i/(pts.length-1))*(W-pL-pR);
   const y=v=>pT+(1-lg(v)/span)*(H-pT-pB);
-  let bands='';THRESHOLDS.forEach(t=>{const yy=y(t.v);
-    bands+=`<line x1="${pL}" x2="${W-pR}" y1="${yy}" y2="${yy}" stroke="#c9d3d7" stroke-dasharray="3 3"/><text x="${W-pR}" y="${yy-2}" text-anchor="end" font-size="8" fill="#93a0a5">${t.v.toLocaleString()}</text>`;});
+  let bands='';REF.forEach(t=>{const yy=y(t.v);bands+=`<line x1="${pL}" x2="${W-pR}" y1="${yy}" y2="${yy}" stroke="#c9d3d7" stroke-dasharray="3 3"/><text x="${W-pR}" y="${yy-2}" text-anchor="end" font-size="8" fill="#93a0a5">${t.v.toLocaleString()}</text>`;});
   let axis='';for(let e=0;e<=ymax;e++){const yy=y(Math.pow(10,e));axis+=`<text x="${pL-4}" y="${yy+3}" text-anchor="end" font-size="8" fill="#93a0a5">${Math.pow(10,e).toLocaleString()}</text>`;}
   const line=pts.map((p,i)=>`${x(i)},${y(p[V])}`).join(' ');
-  const dots=pts.map((p,i)=>`<circle cx="${x(i)}" cy="${y(p[V])}" r="3" fill="${RISK_HEX[p[state.use]]}"><title>${p[D]}: ${fmt(p[V])}/100mL${p[FC]?' (FC)':''}</title></circle>`).join('');
-  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bands}${axis}<polyline points="${line}" fill="none" stroke="#8aa0aa" stroke-width="1.3"/>${dots}<text x="${pL}" y="${H-6}" font-size="8" fill="#93a0a5">${pts[0][D].slice(0,7)}</text><text x="${W-pR}" y="${H-6}" text-anchor="end" font-size="8" fill="#93a0a5">${pts[pts.length-1][D].slice(0,7)}</text></svg><div class="thresholds">Log scale, E.&nbsp;coli /100mL. Dashed = DWS guideline thresholds. Dot colour = ${document.querySelector('#use option:checked').textContent} risk.</div>`;
+  const dotcol=p=>state.colour==='count'?countColor(p[V]):RISK_HEX[p[+state.colour]];
+  const dots=pts.map((p,i)=>`<circle cx="${x(i)}" cy="${y(p[V])}" r="3" fill="${dotcol(p)}"><title>${p[D]}: ${fmt(p[V])}/100mL${p[FC]?' (FC)':''}</title></circle>`).join('');
+  return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${bands}${axis}<polyline points="${line}" fill="none" stroke="#8aa0aa" stroke-width="1.3"/>${dots}<text x="${pL}" y="${H-6}" font-size="8" fill="#93a0a5">${pts[0][D].slice(0,7)}</text><text x="${W-pR}" y="${H-6}" text-anchor="end" font-size="8" fill="#93a0a5">${pts[pts.length-1][D].slice(0,7)}</text></svg><div class="thresholds">Log scale, E.&nbsp;coli /100mL. Dashed = 130 &amp; 1000 reference levels.</div>`;
 }
+
 function showDetail(s){
   const win=s.win||s.s.filter(x=>inWin(x[D]));
   const vals=win.map(x=>x[V]).filter(v=>v!=null);
   const mx=vals.length?Math.max(...vals):null;
   const md=vals.length?vals.slice().sort((a,b)=>a-b)[Math.floor((vals.length-1)/2)]:null;
-  const nHigh=win.filter(x=>x[state.use]===3).length;
-  const rows=win.slice().reverse().map(x=>`<tr><td>${x[D]}</td><td>${fmt(x[V])}${x[FC]?' <span style="color:#93a0a5">FC</span>':''}</td><td>${x[TU]==null?'\u2013':x[TU]}</td><td>${x[PH]==null?'\u2013':x[PH]}</td><td><span class="pill" style="background:${RISK_HEX[x[state.use]]}">${RISK_TXT[x[state.use]]}</span></td></tr>`).join('');
+  const hasRisk=win.some(x=>x[5]||x[6]||x[7]||x[8]);
+  const showRisk=state.colour!=='count';
+  const rows=win.slice().reverse().map(x=>{
+    const rc=showRisk?`<td><span class="pill" style="background:${RISK_HEX[x[+state.colour]]}">${RISK_TXT[x[+state.colour]]}</span></td>`:'';
+    return `<tr><td>${x[D]}</td><td>${fmt(x[V])}${x[FC]?' <span style="color:#93a0a5">FC</span>':''}</td><td>${x[TU]==null?'\u2013':x[TU]}</td><td>${x[PH]==null?'\u2013':x[PH]}</td>${rc}</tr>`;}).join('');
   const noCoord=(s.lat==null||s.lon==null)?' <span style="color:var(--hi)">&middot; no map location</span>':'';
   const wmaTag=state.wma===NATIONAL?` &middot; ${s.w}`:'';
-  document.getElementById('detail').innerHTML=`<div class="card"><h2>${s.n}</h2><div class="meta">PointID ${s.id} &middot; ${s.t||'site'}${wmaTag}${noCoord}</div><div class="kpis"><div class="kpi"><div class="v">${fmt(mx)}</div><div class="l">Max E.coli</div></div><div class="kpi"><div class="v">${fmt(md)}</div><div class="l">Median</div></div><div class="kpi"><div class="v">${win.length}</div><div class="l">Samples</div></div><div class="kpi"><div class="v">${nHigh}</div><div class="l">High-risk</div></div></div>${chart(win)}<div class="evwrap"><table class="ev"><thead><tr><th>Date</th><th>E.coli</th><th>Turb</th><th>pH</th><th>Risk</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  const riskNote=(!hasRisk)?'<div class="thresholds">No DWS risk classification for this site \u2014 counts shown only.</div>':'';
+  const rHead=showRisk?'<th>Risk</th>':'';
+  document.getElementById('detail').innerHTML=`<div class="card"><h2>${s.n}</h2><div class="meta">PointID ${s.id} &middot; ${s.t||'site'}${wmaTag}${noCoord}</div>
+    <div class="kpis"><div class="kpi"><div class="v">${fmt(mx)}</div><div class="l">Max E.coli</div></div><div class="kpi"><div class="v">${fmt(md)}</div><div class="l">Median</div></div><div class="kpi"><div class="v">${win.length}</div><div class="l">Samples</div></div></div>
+    ${chart(win)}${riskNote}
+    <div class="evwrap"><table class="ev"><thead><tr><th>Date</th><th>E.coli</th><th>Turb</th><th>pH</th>${rHead}</tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 function boot(data){
-  SITES=data.sites; if(data.meta&&data.meta.risk_levels)LEVELS=data.meta.risk_levels;
+  SITES=data.sites;META=data.meta||{};
   const wmas=[...new Set(SITES.map(s=>s.w))].sort();
   document.getElementById('wma').innerHTML=`<option>${NATIONAL}</option>`+wmas.map(w=>`<option>${w}</option>`).join('');
   rebuildMonths();
   document.getElementById('controls').style.display='block';
   document.getElementById('legend').style.display='flex';
   document.getElementById('foot').style.display='block';
-  document.getElementById('detail').innerHTML='<div class="placeholder">Click a site on the map for its E.&nbsp;coli time series, risk history and samples.</div>';
+  document.getElementById('foot').innerHTML=(META.source||'DWS microbial monitoring')+'. Counts are MPN or cfu / 100 mL. '+(META.risk_note||'');
+  document.getElementById('detail').innerHTML='<div class="placeholder">Click a site on the map for its E.&nbsp;coli time series and samples.</div>';
   let dmin='9999',dmax='0',nSamp=0;
   SITES.forEach(s=>s.s.forEach(x=>{nSamp++;if(x[D]<dmin)dmin=x[D];if(x[D]>dmax)dmax=x[D];}));
-  document.getElementById('sub').innerHTML=`${nSamp.toLocaleString()} samples &middot; ${SITES.length} sites &middot; ${wmas.length} WMAs &middot; ${dmin.slice(0,4)}\u2013${dmax.slice(0,4)}`;
+  document.getElementById('sub').innerHTML=`${nSamp.toLocaleString()} samples &middot; ${SITES.length.toLocaleString()} sites &middot; ${wmas.length} WMAs &middot; ${dmin.slice(0,4)}\u2013${dmax.slice(0,4)}`;
   document.getElementById('loading').style.display='none';
   render();
 }
 
 map=L.map('map',{preferCanvas:true}).setView([-29,25],5);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'&copy; OpenStreetMap'}).addTo(map);
-
 document.getElementById('wma').onchange=e=>{state.wma=e.target.value;state._fitted=false;state.selected=null;document.getElementById('detail').innerHTML='<div class="placeholder">Click a site on the map.</div>';rebuildMonths();render();};
-document.getElementById('use').onchange=e=>{state.use=+e.target.value;render();};
+document.getElementById('colour').onchange=e=>{state.colour=e.target.value;render();};
 document.getElementById('agg').onchange=e=>{state.agg=e.target.value;render();};
 document.getElementById('pstart').oninput=e=>{state.iStart=Math.min(+e.target.value,state.iEnd);e.target.value=state.iStart;render();};
 document.getElementById('pend').oninput=e=>{state.iEnd=Math.max(+e.target.value,state.iStart);e.target.value=state.iEnd;render();};
 
-fetch('data.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();})
-  .then(boot)
-  .catch(err=>{document.getElementById('loadmsg').innerHTML=
-    'Could not load data.json<br><span style="font-size:11px">'+err.message+'</span>';
-    document.querySelector('.spin').style.display='none';});
+fetch('data.json').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(boot)
+  .catch(err=>{document.getElementById('loadmsg').innerHTML='Could not load data.json<br><span style="font-size:11px">'+err.message+'</span>';document.querySelector('.spin').style.display='none';});
 </script>
 </body>
 </html>
